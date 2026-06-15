@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 - Removed seconds from theme clocks so the header time displays as `HH:MM`.
 - Left-anchored the Tactical, Orbit, and Monitor header clocks to reduce visual jitter when the time changes.
+- Widened Orbit and Monitor header clocks so two-digit hours (e.g. `20:05`) are not clipped.
 - Split temperature units into smaller labels so `C` renders at a reduced size next to the numeric value.
 - Improved quick panel footer spacing so the IP address no longer pushes the online status off-screen.
 - Normalized quick panel switch and power status casing from `on`/`off` to `On`/`Off`.

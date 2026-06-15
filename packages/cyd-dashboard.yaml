@@ -4268,9 +4268,9 @@ lvgl:
                         text_color: 0x6F8FC5
                     - label:
                         id: orbit_clock
-                        x: 220
+                        x: 208
                         y: 0
-                        width: 76
+                        width: 96
                         text_align: LEFT
                         text: "--:--"
                         text_font: font_clock
@@ -5858,9 +5858,9 @@ lvgl:
                         text_color: ${color_monitor_muted}
                     - label:
                         id: monitor_clock
-                        x: 214
+                        x: 206
                         y: 4
-                        width: 76
+                        width: 96
                         text_align: LEFT
                         text: "--:--"
                         text_font: font_clock
