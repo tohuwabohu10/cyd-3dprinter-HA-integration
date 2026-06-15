@@ -622,6 +622,10 @@ text_sensor:
           }
         }
       }
+      if (!is_utc && s.size() >= 10 && s[4] == '-' && s[7] == '-' &&
+          s[0] >= '0' && s[0] <= '9') {
+        is_utc = true;
+      }
 
       ESPTime parsed;
       if (ESPTime::strptime(s, parsed)) {
@@ -657,6 +661,16 @@ text_sensor:
     internal: true
     update_interval: 1s
     lambda: |-
+      const auto now = id(ha_time).now();
+      const float remaining = id(printer_time_left).state;
+      if (now.is_valid() && !isnan(remaining) && remaining > 0.0f) {
+        const time_t end_ts = now.timestamp + static_cast<time_t>(remaining * 60.0f);
+        const ESPTime end_local = ESPTime::from_epoch_local(end_ts);
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%02d:%02d", end_local.hour, end_local.minute);
+        return std::string(buf);
+      }
+
       const std::string raw = id(printer_end_time).state;
       if (raw.empty() || raw == "unknown" || raw == "unavailable") {
         return std::string("--");
@@ -697,6 +711,10 @@ text_sensor:
             s.pop_back();
           }
         }
+      }
+      if (!is_utc && s.size() >= 10 && s[4] == '-' && s[7] == '-' &&
+          s[0] >= '0' && s[0] <= '9') {
+        is_utc = true;
       }
 
       ESPTime parsed;
