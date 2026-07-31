@@ -195,6 +195,21 @@ globals:
     restore_value: no
     initial_value: 'false'
 
+  - id: captured_start_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: captured_start_hour
+    type: uint8_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: captured_start_minute
+    type: uint8_t
+    restore_value: no
+    initial_value: '0'
+
   - id: palette_bg_color
     type: uint32_t
     restore_value: no
@@ -544,6 +559,43 @@ text_sensor:
     id: printer_status
     entity_id: ${printer_state_entity}
     internal: true
+    on_value:
+      then:
+        - lambda: |-
+            std::string s = x;
+            for (char &c : s) {
+              if (c >= 'A' && c <= 'Z') {
+                c = static_cast<char>(c - 'A' + 'a');
+              }
+            }
+
+            const bool is_active =
+                s.find("prepar") != std::string::npos ||
+                s.find("running") != std::string::npos;
+
+            const bool is_finished =
+                s.empty() || s == "unknown" || s == "unavailable" ||
+                s.find("idle") != std::string::npos ||
+                s.find("finish") != std::string::npos ||
+                s.find("complete") != std::string::npos ||
+                s.find("failed") != std::string::npos ||
+                s.find("cancel") != std::string::npos ||
+                s.find("offline") != std::string::npos;
+
+            if (is_finished) {
+              id(captured_start_valid) = false;
+              return;
+            }
+
+            if (is_active && !id(captured_start_valid)) {
+              auto now = id(ha_time).now();
+              if (now.is_valid()) {
+                id(captured_start_hour) = now.hour;
+                id(captured_start_minute) = now.minute;
+                id(captured_start_valid) = true;
+              }
+            }
+        - script.execute: refresh_ui
 
   - platform: homeassistant
     id: printer_start_time
@@ -575,6 +627,65 @@ text_sensor:
   - platform: template
     id: printer_time_left_formatted
     internal: true
+
+  - platform: template
+    id: printer_start_time_display
+    internal: true
+    update_interval: 1s
+    lambda: |-
+      if (id(captured_start_valid)) {
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%02d:%02d", id(captured_start_hour), id(captured_start_minute));
+        return std::string(buf);
+      }
+      return std::string("--");
+
+  - platform: template
+    id: printer_end_time_display
+    internal: true
+    update_interval: 1s
+    lambda: |-
+      const auto now = id(ha_time).now();
+      if (!now.is_valid()) {
+        return std::string("--");
+      }
+
+      float remaining = id(printer_time_left).state;
+      if (isnan(remaining) || remaining < 0.0f) {
+        remaining = 0.0f;
+      }
+
+      std::string unit = id(printer_time_left_unit).state;
+      for (char &c : unit) {
+        if (c >= 'A' && c <= 'Z') {
+          c = static_cast<char>(c - 'A' + 'a');
+        }
+      }
+
+      int total_minutes = 0;
+      if (unit.find("jour") != std::string::npos || unit.find("day") != std::string::npos || unit == "d") {
+        total_minutes = static_cast<int>(remaining * 1440.0f + 0.5f);
+      } else if (unit.find("heure") != std::string::npos || unit.find("hour") != std::string::npos || unit == "h" || unit == "hr" || unit == "hrs") {
+        total_minutes = static_cast<int>(remaining * 60.0f + 0.5f);
+      } else if (unit.find("sec") != std::string::npos || unit == "s") {
+        total_minutes = static_cast<int>(remaining / 60.0f + 0.5f);
+      } else if (unit.find("min") != std::string::npos || unit == "m") {
+        total_minutes = static_cast<int>(remaining + 0.5f);
+      } else if (remaining > 0.0f && remaining <= 24.0f) {
+        total_minutes = static_cast<int>(remaining * 60.0f + 0.5f);
+      } else {
+        total_minutes = static_cast<int>(remaining + 0.5f);
+      }
+
+      if (total_minutes > 0) {
+        const time_t end_ts = now.timestamp + static_cast<time_t>(total_minutes) * 60;
+        const ESPTime end_local = ESPTime::from_epoch_local(end_ts);
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%02d:%02d", end_local.hour, end_local.minute);
+        return std::string(buf);
+      }
+
+      return std::string("--");
 
   - platform: template
     id: touch_last_position
@@ -1849,46 +1960,12 @@ script:
       - lvgl.label.update:
           id: start_value
           text: !lambda |-
-            if (id(printer_start_time).state.empty() || id(printer_start_time).state == "unknown" || id(printer_start_time).state == "unavailable") {
-              return std::string("--");
-            }
-            std::string s = id(printer_start_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = s.find(':');
-            if (colon != std::string::npos && colon + 2 < s.size() && is_digit(s[colon + 1]) && is_digit(s[colon + 2])) {
-              if (colon >= 2 && is_digit(s[colon - 2]) && is_digit(s[colon - 1])) {
-                s = s.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(s[colon - 1])) {
-                s = std::string("0") + s.substr(colon - 1, 4);
-              } else {
-                s = "--";
-              }
-            } else {
-              s = "--";
-            }
-            return s;
+            return id(printer_start_time_display).state;
 
       - lvgl.label.update:
           id: end_value
           text: !lambda |-
-            if (id(printer_end_time).state.empty() || id(printer_end_time).state == "unknown" || id(printer_end_time).state == "unavailable") {
-              return std::string("--");
-            }
-            std::string e = id(printer_end_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = e.find(':');
-            if (colon != std::string::npos && colon + 2 < e.size() && is_digit(e[colon + 1]) && is_digit(e[colon + 2])) {
-              if (colon >= 2 && is_digit(e[colon - 2]) && is_digit(e[colon - 1])) {
-                e = e.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(e[colon - 1])) {
-                e = std::string("0") + e.substr(colon - 1, 4);
-              } else {
-                e = "--";
-              }
-            } else {
-              e = "--";
-            }
-            return e;
+            return id(printer_end_time_display).state;
 
       - lvgl.label.update:
           id: power_value
@@ -2055,46 +2132,12 @@ script:
       - lvgl.label.update:
           id: monitor_start
           text: !lambda |-
-            if (id(printer_start_time).state.empty() || id(printer_start_time).state == "unknown" || id(printer_start_time).state == "unavailable") {
-              return std::string("--");
-            }
-            std::string s = id(printer_start_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = s.find(':');
-            if (colon != std::string::npos && colon + 2 < s.size() && is_digit(s[colon + 1]) && is_digit(s[colon + 2])) {
-              if (colon >= 2 && is_digit(s[colon - 2]) && is_digit(s[colon - 1])) {
-                s = s.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(s[colon - 1])) {
-                s = std::string("0") + s.substr(colon - 1, 4);
-              } else {
-                s = "--";
-              }
-            } else {
-              s = "--";
-            }
-            return s;
+            return id(printer_start_time_display).state;
 
       - lvgl.label.update:
           id: monitor_end
           text: !lambda |-
-            if (id(printer_end_time).state.empty() || id(printer_end_time).state == "unknown" || id(printer_end_time).state == "unavailable") {
-              return std::string("--");
-            }
-            std::string e = id(printer_end_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = e.find(':');
-            if (colon != std::string::npos && colon + 2 < e.size() && is_digit(e[colon + 1]) && is_digit(e[colon + 2])) {
-              if (colon >= 2 && is_digit(e[colon - 2]) && is_digit(e[colon - 1])) {
-                e = e.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(e[colon - 1])) {
-                e = std::string("0") + e.substr(colon - 1, 4);
-              } else {
-                e = "--";
-              }
-            } else {
-              e = "--";
-            }
-            return e;
+            return id(printer_end_time_display).state;
 
       - lvgl.label.update:
           id: monitor_wifi
@@ -2625,46 +2668,12 @@ script:
       - lvgl.label.update:
           id: orbit_start
           text: !lambda |-
-            if (id(printer_start_time).state.empty() || id(printer_start_time).state == "unknown" || id(printer_start_time).state == "unavailable") {
-              return std::string("S --");
-            }
-            std::string s = id(printer_start_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = s.find(':');
-            if (colon != std::string::npos && colon + 2 < s.size() && is_digit(s[colon + 1]) && is_digit(s[colon + 2])) {
-              if (colon >= 2 && is_digit(s[colon - 2]) && is_digit(s[colon - 1])) {
-                s = s.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(s[colon - 1])) {
-                s = std::string("0") + s.substr(colon - 1, 4);
-              } else {
-                s = "--";
-              }
-            } else {
-              s = "--";
-            }
-            return std::string("S ") + s;
+            return std::string("S ") + id(printer_start_time_display).state;
 
       - lvgl.label.update:
           id: orbit_end
           text: !lambda |-
-            if (id(printer_end_time).state.empty() || id(printer_end_time).state == "unknown" || id(printer_end_time).state == "unavailable") {
-              return std::string("E --");
-            }
-            std::string e = id(printer_end_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = e.find(':');
-            if (colon != std::string::npos && colon + 2 < e.size() && is_digit(e[colon + 1]) && is_digit(e[colon + 2])) {
-              if (colon >= 2 && is_digit(e[colon - 2]) && is_digit(e[colon - 1])) {
-                e = e.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(e[colon - 1])) {
-                e = std::string("0") + e.substr(colon - 1, 4);
-              } else {
-                e = "--";
-              }
-            } else {
-              e = "--";
-            }
-            return std::string("E ") + e;
+            return std::string("E ") + id(printer_end_time_display).state;
 
       - lvgl.label.update:
           id: orbit_power
@@ -2801,46 +2810,12 @@ script:
       - lvgl.label.update:
           id: blueprint_start
           text: !lambda |-
-            if (id(printer_start_time).state.empty() || id(printer_start_time).state == "unknown" || id(printer_start_time).state == "unavailable") {
-              return std::string("S --");
-            }
-            std::string s = id(printer_start_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = s.find(':');
-            if (colon != std::string::npos && colon + 2 < s.size() && is_digit(s[colon + 1]) && is_digit(s[colon + 2])) {
-              if (colon >= 2 && is_digit(s[colon - 2]) && is_digit(s[colon - 1])) {
-                s = s.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(s[colon - 1])) {
-                s = std::string("0") + s.substr(colon - 1, 4);
-              } else {
-                s = "--";
-              }
-            } else {
-              s = "--";
-            }
-            return std::string("S ") + s;
+            return std::string("S ") + id(printer_start_time_display).state;
 
       - lvgl.label.update:
           id: blueprint_end
           text: !lambda |-
-            if (id(printer_end_time).state.empty() || id(printer_end_time).state == "unknown" || id(printer_end_time).state == "unavailable") {
-              return std::string("E --");
-            }
-            std::string e = id(printer_end_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = e.find(':');
-            if (colon != std::string::npos && colon + 2 < e.size() && is_digit(e[colon + 1]) && is_digit(e[colon + 2])) {
-              if (colon >= 2 && is_digit(e[colon - 2]) && is_digit(e[colon - 1])) {
-                e = e.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(e[colon - 1])) {
-                e = std::string("0") + e.substr(colon - 1, 4);
-              } else {
-                e = "--";
-              }
-            } else {
-              e = "--";
-            }
-            return std::string("E ") + e;
+            return std::string("E ") + id(printer_end_time_display).state;
 
       - lvgl.label.update:
           id: brutal_clock
@@ -2962,46 +2937,12 @@ script:
       - lvgl.label.update:
           id: brutal_start
           text: !lambda |-
-            if (id(printer_start_time).state.empty() || id(printer_start_time).state == "unknown" || id(printer_start_time).state == "unavailable") {
-              return std::string("S --");
-            }
-            std::string s = id(printer_start_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = s.find(':');
-            if (colon != std::string::npos && colon + 2 < s.size() && is_digit(s[colon + 1]) && is_digit(s[colon + 2])) {
-              if (colon >= 2 && is_digit(s[colon - 2]) && is_digit(s[colon - 1])) {
-                s = s.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(s[colon - 1])) {
-                s = std::string("0") + s.substr(colon - 1, 4);
-              } else {
-                s = "--";
-              }
-            } else {
-              s = "--";
-            }
-            return std::string("S ") + s;
+            return std::string("S ") + id(printer_start_time_display).state;
 
       - lvgl.label.update:
           id: brutal_end
           text: !lambda |-
-            if (id(printer_end_time).state.empty() || id(printer_end_time).state == "unknown" || id(printer_end_time).state == "unavailable") {
-              return std::string("E --");
-            }
-            std::string e = id(printer_end_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = e.find(':');
-            if (colon != std::string::npos && colon + 2 < e.size() && is_digit(e[colon + 1]) && is_digit(e[colon + 2])) {
-              if (colon >= 2 && is_digit(e[colon - 2]) && is_digit(e[colon - 1])) {
-                e = e.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(e[colon - 1])) {
-                e = std::string("0") + e.substr(colon - 1, 4);
-              } else {
-                e = "--";
-              }
-            } else {
-              e = "--";
-            }
-            return std::string("E ") + e;
+            return std::string("E ") + id(printer_end_time_display).state;
 
       - lvgl.label.update:
           id: apple_clock
@@ -3123,46 +3064,12 @@ script:
       - lvgl.label.update:
           id: apple_start
           text: !lambda |-
-            if (id(printer_start_time).state.empty() || id(printer_start_time).state == "unknown" || id(printer_start_time).state == "unavailable") {
-              return std::string("S --");
-            }
-            std::string s = id(printer_start_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = s.find(':');
-            if (colon != std::string::npos && colon + 2 < s.size() && is_digit(s[colon + 1]) && is_digit(s[colon + 2])) {
-              if (colon >= 2 && is_digit(s[colon - 2]) && is_digit(s[colon - 1])) {
-                s = s.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(s[colon - 1])) {
-                s = std::string("0") + s.substr(colon - 1, 4);
-              } else {
-                s = "--";
-              }
-            } else {
-              s = "--";
-            }
-            return std::string("S ") + s;
+            return std::string("S ") + id(printer_start_time_display).state;
 
       - lvgl.label.update:
           id: apple_end
           text: !lambda |-
-            if (id(printer_end_time).state.empty() || id(printer_end_time).state == "unknown" || id(printer_end_time).state == "unavailable") {
-              return std::string("E --");
-            }
-            std::string e = id(printer_end_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = e.find(':');
-            if (colon != std::string::npos && colon + 2 < e.size() && is_digit(e[colon + 1]) && is_digit(e[colon + 2])) {
-              if (colon >= 2 && is_digit(e[colon - 2]) && is_digit(e[colon - 1])) {
-                e = e.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(e[colon - 1])) {
-                e = std::string("0") + e.substr(colon - 1, 4);
-              } else {
-                e = "--";
-              }
-            } else {
-              e = "--";
-            }
-            return std::string("E ") + e;
+            return std::string("E ") + id(printer_end_time_display).state;
 
       - lvgl.label.update:
           id: grid_clock
@@ -3284,46 +3191,12 @@ script:
       - lvgl.label.update:
           id: grid_start
           text: !lambda |-
-            if (id(printer_start_time).state.empty() || id(printer_start_time).state == "unknown" || id(printer_start_time).state == "unavailable") {
-              return std::string("S --");
-            }
-            std::string s = id(printer_start_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = s.find(':');
-            if (colon != std::string::npos && colon + 2 < s.size() && is_digit(s[colon + 1]) && is_digit(s[colon + 2])) {
-              if (colon >= 2 && is_digit(s[colon - 2]) && is_digit(s[colon - 1])) {
-                s = s.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(s[colon - 1])) {
-                s = std::string("0") + s.substr(colon - 1, 4);
-              } else {
-                s = "--";
-              }
-            } else {
-              s = "--";
-            }
-            return std::string("S ") + s;
+            return std::string("S ") + id(printer_start_time_display).state;
 
       - lvgl.label.update:
           id: grid_end
           text: !lambda |-
-            if (id(printer_end_time).state.empty() || id(printer_end_time).state == "unknown" || id(printer_end_time).state == "unavailable") {
-              return std::string("E --");
-            }
-            std::string e = id(printer_end_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = e.find(':');
-            if (colon != std::string::npos && colon + 2 < e.size() && is_digit(e[colon + 1]) && is_digit(e[colon + 2])) {
-              if (colon >= 2 && is_digit(e[colon - 2]) && is_digit(e[colon - 1])) {
-                e = e.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(e[colon - 1])) {
-                e = std::string("0") + e.substr(colon - 1, 4);
-              } else {
-                e = "--";
-              }
-            } else {
-              e = "--";
-            }
-            return std::string("E ") + e;
+            return std::string("E ") + id(printer_end_time_display).state;
 
       - lvgl.label.update:
           id: skeuo_clock
@@ -3445,46 +3318,12 @@ script:
       - lvgl.label.update:
           id: skeuo_start
           text: !lambda |-
-            if (id(printer_start_time).state.empty() || id(printer_start_time).state == "unknown" || id(printer_start_time).state == "unavailable") {
-              return std::string("S --");
-            }
-            std::string s = id(printer_start_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = s.find(':');
-            if (colon != std::string::npos && colon + 2 < s.size() && is_digit(s[colon + 1]) && is_digit(s[colon + 2])) {
-              if (colon >= 2 && is_digit(s[colon - 2]) && is_digit(s[colon - 1])) {
-                s = s.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(s[colon - 1])) {
-                s = std::string("0") + s.substr(colon - 1, 4);
-              } else {
-                s = "--";
-              }
-            } else {
-              s = "--";
-            }
-            return std::string("S ") + s;
+            return std::string("S ") + id(printer_start_time_display).state;
 
       - lvgl.label.update:
           id: skeuo_end
           text: !lambda |-
-            if (id(printer_end_time).state.empty() || id(printer_end_time).state == "unknown" || id(printer_end_time).state == "unavailable") {
-              return std::string("E --");
-            }
-            std::string e = id(printer_end_time).state;
-            auto is_digit = [](char c) -> bool { return c >= '0' && c <= '9'; };
-            size_t colon = e.find(':');
-            if (colon != std::string::npos && colon + 2 < e.size() && is_digit(e[colon + 1]) && is_digit(e[colon + 2])) {
-              if (colon >= 2 && is_digit(e[colon - 2]) && is_digit(e[colon - 1])) {
-                e = e.substr(colon - 2, 5);
-              } else if (colon >= 1 && is_digit(e[colon - 1])) {
-                e = std::string("0") + e.substr(colon - 1, 4);
-              } else {
-                e = "--";
-              }
-            } else {
-              e = "--";
-            }
-            return std::string("E ") + e;
+            return std::string("E ") + id(printer_end_time_display).state;
 
   - id: show_toast
     mode: restart
