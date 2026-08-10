@@ -338,7 +338,7 @@ display:
     cs_pin: ${pin_tft_cs}
     dc_pin: ${pin_tft_dc}
     invert_colors: false
-    color_order: bgr
+    color_order: rgb
     byte_order: big_endian
     data_rate: 20MHz
     auto_clear_enabled: false
