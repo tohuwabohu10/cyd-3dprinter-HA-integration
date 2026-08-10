@@ -334,7 +334,7 @@ display:
   - platform: mipi_spi
     id: tft
     spi_id: lcd
-    model: ILI9341
+    model: ILI9342
     cs_pin: ${pin_tft_cs}
     dc_pin: ${pin_tft_dc}
     invert_colors: false
@@ -343,13 +343,6 @@ display:
     data_rate: 20MHz
     auto_clear_enabled: false
     color_depth: 16
-    transform:
-      swap_xy: ${display_swap_xy}
-      mirror_x: ${display_mirror_x}
-      mirror_y: ${display_mirror_y}
-    dimensions:
-      width: ${display_w}
-      height: ${display_h}
     update_interval: never
 
 touchscreen:
