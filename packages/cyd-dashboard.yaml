@@ -334,7 +334,7 @@ display:
   - platform: mipi_spi
     id: tft
     spi_id: lcd
-    model: ILI9341
+    model: ILI9342
     cs_pin: ${pin_tft_cs}
     dc_pin: ${pin_tft_dc}
     invert_colors: false
