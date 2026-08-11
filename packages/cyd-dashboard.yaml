@@ -321,7 +321,6 @@ light:
     name: "${friendly_name} Backlight"
     output: backlight_pwm
     restore_mode: ALWAYS_ON
-    initial_value: 60
 
   - platform: rgb
     name: LED
