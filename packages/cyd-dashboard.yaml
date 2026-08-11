@@ -321,6 +321,7 @@ light:
     name: "${friendly_name} Backlight"
     output: backlight_pwm
     restore_mode: ALWAYS_ON
+    initial_value: 60
 
   - platform: rgb
     name: LED
@@ -334,7 +335,7 @@ display:
   - platform: mipi_spi
     id: tft
     spi_id: lcd
-    model: ILI9342
+    model: ILI9341
     cs_pin: ${pin_tft_cs}
     dc_pin: ${pin_tft_dc}
     invert_colors: false
